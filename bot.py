@@ -1,11 +1,23 @@
 import feedparser
 import requests
 import html
+import os
 
 # === CONFIG ===
 BOT_TOKEN = "7839637427:AAE0LL7xeUVJiJusSHaHTOGYAI3kopwxdn4"
 CHAT_ID = "@football1805"   # Channel username with @
 FEED_URL = "http://feeds.bbci.co.uk/sport/football/rss.xml"
+LAST_POST_FILE = "last_posted.txt"
+
+def get_last_posted():
+    if os.path.exists(LAST_POST_FILE):
+        with open(LAST_POST_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    return None
+
+def set_last_posted(link):
+    with open(LAST_POST_FILE, "w", encoding="utf-8") as f:
+        f.write(link)
 
 def fetch_and_send():
     print("🚀 Bot started")
@@ -17,31 +29,47 @@ def fetch_and_send():
 
     print(f"✅ Fetched {len(feed.entries)} articles")
 
-    entry = feed.entries[0]
-    title = html.unescape(entry.title)
-    summary = html.unescape(entry.summary) if "summary" in entry else ""
+    last_posted = get_last_posted()
+    new_posts = []
 
-    # Try to get image
-    image_url = None
-    if "media_content" in entry:
-        image_url = entry.media_content[0].get("url")
-    elif "media_thumbnail" in entry:
-        image_url = entry.media_thumbnail[0].get("url")
-    elif "links" in entry:
-        for link_data in entry.links:
-            if link_data.get("type", "").startswith("image"):
-                image_url = link_data["href"]
-                break
+    # Collect new articles
+    for entry in feed.entries[:5]:  # look at latest 5
+        if entry.link == last_posted:
+            break
+        new_posts.append(entry)
 
-    message_text = f"⚽ <b>{title}</b>\n\n{summary}"
+    # Reverse so oldest new goes first
+    new_posts.reverse()
 
-    print(f"📰 Sending: {title}")
-    if image_url:
-        print(f"🖼️ Found image: {image_url}")
-        send_photo(image_url, message_text)
-    else:
-        print("⚠️ No image found, sending text only.")
-        send_message(message_text)
+    if not new_posts:
+        print("⏸️ No new posts to send")
+        return
+
+    for entry in new_posts:
+        title = html.unescape(entry.title)
+        summary = html.unescape(entry.summary) if "summary" in entry else ""
+        image_url = None
+
+        if "media_content" in entry:
+            image_url = entry.media_content[0].get("url")
+        elif "media_thumbnail" in entry:
+            image_url = entry.media_thumbnail[0].get("url")
+        elif "links" in entry:
+            for link_data in entry.links:
+                if link_data.get("type", "").startswith("image"):
+                    image_url = link_data["href"]
+                    break
+
+        message_text = f"⚽ <b>{title}</b>\n\n{summary}\n\n🔗 {entry.link}"
+
+        print(f"📰 Sending: {title}")
+        if image_url:
+            send_photo(image_url, message_text)
+        else:
+            send_message(message_text)
+
+    # Save the latest one
+    set_last_posted(new_posts[-1].link)
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
