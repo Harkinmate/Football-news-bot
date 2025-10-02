@@ -12,8 +12,8 @@ BOT_TOKEN = "7839637427:AAE0LL7xeUVJiJusSHaHTOGYAI3kopwxdn4"
 CHANNEL_ID = "@football1805"
 RSS_URL = "http://feeds.bbci.co.uk/sport/football/rss.xml"
 CACHE_FILE = "posted.json"
-POSTS_PER_RUN = 5  # 1–5 posts per run
-SUMMARY_TRUNCATE = 250  # characters for Telegram read more effect
+POSTS_PER_RUN = 5          # 1–5 posts per run
+SUMMARY_TRUNCATE = 250     # chars for Telegram "read more"
 # ----------------------------------------
 
 def load_posted():
@@ -27,17 +27,15 @@ def save_posted(posted):
         json.dump(list(posted), f)
 
 def get_high_quality_image(url):
-    """Scrape the main article image for HQ version."""
+    """Scrape main article image from BBC football page."""
     try:
         res = requests.get(url, timeout=10)
         soup = BeautifulSoup(res.content, "html.parser")
-        # BBC main image usually in figure or div with specific class
         figure = soup.find("figure")
         if figure:
             img = figure.find("img")
             if img and img.get("src"):
                 return img["src"]
-        # fallback: first large image
         img = soup.find("img")
         if img and img.get("src"):
             return img["src"]
@@ -46,7 +44,7 @@ def get_high_quality_image(url):
     return None
 
 def get_hashtags(title, summary):
-    """Generate hashtags from words >2 letters, limit 8."""
+    """Generate up to 8 hashtags from title and summary words."""
     hashtags = set()
     words = re.findall(r'\b\w{3,}\b', title + " " + summary)
     for word in words:
@@ -54,7 +52,7 @@ def get_hashtags(title, summary):
     return " ".join(list(hashtags)[:8])
 
 def get_news():
-    """Fetch today’s football news from RSS."""
+    """Fetch today's football news from RSS."""
     feed = feedparser.parse(RSS_URL)
     today = datetime.utcnow().date()
     articles = []
@@ -65,14 +63,13 @@ def get_news():
         link = entry.link
         published_date = datetime(*entry.published_parsed[:6]).date()
 
-        # Only today's posts
         if published_date != today:
             continue
 
         image_url = get_high_quality_image(link)
         hashtags = get_hashtags(title, summary)
 
-        # Truncate summary for Telegram “read more” drop-down
+        # Truncate summary for Telegram "read more"
         if len(summary) > SUMMARY_TRUNCATE:
             summary = summary[:SUMMARY_TRUNCATE] + "..."
 
@@ -80,7 +77,7 @@ def get_news():
             "title": title,
             "summary": summary,
             "image": image_url,
-            "link": link,       # internal tracking only
+            "link": link,  # internal tracking only
             "hashtags": hashtags
         })
 
