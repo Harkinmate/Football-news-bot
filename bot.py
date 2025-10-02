@@ -1,63 +1,70 @@
-import requests
-from bs4 import BeautifulSoup
 import feedparser
-import os
+import requests
+import html
+import time
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID", "@football1805")
+# === CONFIG ===
+BOT_TOKEN = "7839637427:AAE0LL7xeUVJiJusSHaHTOGYAI3kopwxdn4"
+CHAT_ID = "@football1805"   # Channel username with @
+FEED_URL = "http://feeds.bbci.co.uk/sport/football/rss.xml"
 
-BBC_RSS = "http://feeds.bbci.co.uk/sport/football/rss.xml"
+def fetch_and_send():
+    print("🚀 Bot started")
 
-posted = set()
+    # Parse the RSS feed
+    feed = feedparser.parse(FEED_URL)
+    if not feed.entries:
+        print("⚠️ No entries found in feed.")
+        return
 
-def send_to_telegram(title, summary, image_url=None):
+    print(f"✅ Fetched {len(feed.entries)} articles")
+
+    # Take only the first (latest) entry
+    entry = feed.entries[0]
+    title = html.unescape(entry.title)
+    summary = html.unescape(entry.summary) if "summary" in entry else ""
+    link = entry.link
+
+    # Try to get image
+    image_url = None
+    if "media_content" in entry:
+        image_url = entry.media_content[0]["url"]
+    elif "links" in entry:
+        for link_data in entry.links:
+            if link_data.get("type", "").startswith("image"):
+                image_url = link_data["href"]
+                break
+
+    message_text = f"📌 <b>{title}</b>\n\n{summary}"
+
+    print(f"⚽ Sending: {title}")
+
     if image_url:
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-            data={"chat_id": CHAT_ID, "caption": f"{title}\n\n{summary}"[:1024]},
-            files={"photo": requests.get(image_url).content},
-        )
+        send_photo(image_url, message_text)
     else:
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": f"{title}\n\n{summary}"[:4096]},
-        )
+        send_message(message_text)
 
-def fetch_bbc():
-    feed = feedparser.parse(BBC_RSS)
-    for entry in feed.entries:
-        if entry.id in posted:
-            continue
-        title = entry.title
-        summary = entry.summary if hasattr(entry, "summary") else ""
-        image_url = None
-        if "media_content" in entry:
-            image_url = entry.media_content[0]["url"]
-        send_to_telegram(title, summary, image_url)
-        posted.add(entry.id)
-        break
+def send_message(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML"
+    }
+    r = requests.post(url, json=payload)
+    print("➡️ Message response:", r.text)
 
-def fetch_talksport():
-    url = "https://talksport.com/football/"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
+def send_photo(photo_url, caption):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    payload = {
+        "chat_id": CHAT_ID,
+        "photo": photo_url,
+        "caption": caption,
+        "parse_mode": "HTML"
+    }
+    r = requests.post(url, data=payload)
+    print("➡️ Photo response:", r.text)
 
-    article = soup.find("article")
-    if not article:
-        return
-
-    link = article.find("a")["href"]
-    if link in posted:
-        return
-
-    title = article.find("h3").get_text(strip=True)
-    image_tag = article.find("img")
-    image_url = image_tag["src"] if image_tag else None
-    summary = article.find("p").get_text(strip=True) if article.find("p") else ""
-
-    send_to_telegram(title, summary, image_url)
-    posted.add(link)
 
 if __name__ == "__main__":
-    fetch_bbc()
-    fetch_talksport()
+    fetch_and_send()
