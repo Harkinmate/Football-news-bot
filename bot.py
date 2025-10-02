@@ -2,19 +2,18 @@ import feedparser
 import requests
 import json
 import os
+import re
 from bs4 import BeautifulSoup
+from datetime import datetime
 from telegram import Bot
 
-# Your bot token & channel
+# ---------------- CONFIG ----------------
 BOT_TOKEN = "7839637427:AAE0LL7xeUVJiJusSHaHTOGYAI3kopwxdn4"
 CHANNEL_ID = "@football1805"
-
-# BBC Football RSS
 RSS_URL = "http://feeds.bbci.co.uk/sport/football/rss.xml"
-
-# Cache file for posted links
 CACHE_FILE = "posted.json"
-
+POSTS_PER_RUN = 5  # 1–5 posts per run
+# ----------------------------------------
 
 def load_posted():
     if os.path.exists(CACHE_FILE):
@@ -22,38 +21,63 @@ def load_posted():
             return set(json.load(f))
     return set()
 
-
 def save_posted(posted):
     with open(CACHE_FILE, "w") as f:
         json.dump(list(posted), f)
 
+def get_high_quality_image(url):
+    try:
+        res = requests.get(url, timeout=10)
+        soup = BeautifulSoup(res.content, "html.parser")
+        # Look for main image in <figure>
+        figure = soup.find("figure")
+        if figure:
+            img = figure.find("img")
+            if img and img.get("src"):
+                return img["src"]
+        # fallback: first large image
+        img = soup.find("img")
+        if img and img.get("src"):
+            return img["src"]
+    except:
+        return None
+    return None
+
+def get_hashtags(title, summary):
+    hashtags = set()
+    # extract words longer than 2 letters
+    words = re.findall(r'\b\w{3,}\b', title + " " + summary)
+    for word in words:
+        hashtags.add("#" + word.lower())
+    # optionally limit hashtags to 5–8 max
+    return " ".join(list(hashtags)[:8])
 
 def get_news():
     feed = feedparser.parse(RSS_URL)
+    today = datetime.utcnow().date()
     articles = []
+
     for entry in feed.entries:
         title = entry.title
-        link = entry.link
         summary = BeautifulSoup(entry.summary, "html.parser").get_text()
+        link = entry.link
+        published_date = datetime(*entry.published_parsed[:6]).date()
 
-        # Try to extract image from media_content or summary
-        image_url = None
-        if "media_content" in entry:
-            image_url = entry.media_content[0].get("url", None)
-        else:
-            soup = BeautifulSoup(entry.summary, "html.parser")
-            img = soup.find("img")
-            if img:
-                image_url = img["src"]
+        # Only consider posts from today
+        if published_date != today:
+            continue
+
+        image_url = get_high_quality_image(link)
+        hashtags = get_hashtags(title, summary)
 
         articles.append({
             "title": title,
-            "link": link,
             "summary": summary,
-            "image": image_url
+            "image": image_url,
+            "hashtags": hashtags
         })
-    return articles
 
+    return articles
 
 def main():
     bot = Bot(token=BOT_TOKEN)
@@ -61,21 +85,39 @@ def main():
     news = get_news()
 
     count = 0
-    for article in news[:5]:  # take top 5 per run
+    for article in news:
         if article["link"] not in posted:
-            msg = f"⚽ <b>{article['title']}</b>\n\n{article['summary']}\n\n🔗 {article['link']}"
+            caption = f"⚽ <b>{article['title']}</b>\n\n{article['summary']}\n\n{article['hashtags']}"
             if article["image"]:
-                bot.send_photo(chat_id=CHANNEL_ID, photo=article["image"], caption=msg, parse_mode="HTML")
+                bot.send_photo(chat_id=CHANNEL_ID, photo=article["image"], caption=caption, parse_mode="HTML")
             else:
-                bot.send_message(chat_id=CHANNEL_ID, text=msg, parse_mode="HTML")
+                bot.send_message(chat_id=CHANNEL_ID, text=caption, parse_mode="HTML")
 
             posted.add(article["link"])
             count += 1
-            if count >= 5:
+            if count >= POSTS_PER_RUN:
                 break
 
-    save_posted(posted)
+    # If no new posts, fetch other posts from today not sent
+    if count == 0:
+        for entry in feedparser.parse(RSS_URL).entries:
+            link = entry.link
+            if link not in posted:
+                title = entry.title
+                summary = BeautifulSoup(entry.summary, "html.parser").get_text()
+                image_url = get_high_quality_image(link)
+                hashtags = get_hashtags(title, summary)
+                caption = f"⚽ <b>{title}</b>\n\n{summary}\n\n{hashtags}"
+                if image_url:
+                    bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=caption, parse_mode="HTML")
+                else:
+                    bot.send_message(chat_id=CHANNEL_ID, text=caption, parse_mode="HTML")
+                posted.add(link)
+                count += 1
+                if count >= POSTS_PER_RUN:
+                    break
 
+    save_posted(posted)
 
 if __name__ == "__main__":
     main()
