@@ -1,7 +1,6 @@
 import feedparser
 import requests
 import html
-import time
 
 # === CONFIG ===
 BOT_TOKEN = "7839637427:AAE0LL7xeUVJiJusSHaHTOGYAI3kopwxdn4"
@@ -11,7 +10,6 @@ FEED_URL = "http://feeds.bbci.co.uk/sport/football/rss.xml"
 def fetch_and_send():
     print("🚀 Bot started")
 
-    # Parse the RSS feed
     feed = feedparser.parse(FEED_URL)
     if not feed.entries:
         print("⚠️ No entries found in feed.")
@@ -19,29 +17,30 @@ def fetch_and_send():
 
     print(f"✅ Fetched {len(feed.entries)} articles")
 
-    # Take only the first (latest) entry
     entry = feed.entries[0]
     title = html.unescape(entry.title)
     summary = html.unescape(entry.summary) if "summary" in entry else ""
-    link = entry.link
 
     # Try to get image
     image_url = None
     if "media_content" in entry:
-        image_url = entry.media_content[0]["url"]
+        image_url = entry.media_content[0].get("url")
+    elif "media_thumbnail" in entry:
+        image_url = entry.media_thumbnail[0].get("url")
     elif "links" in entry:
         for link_data in entry.links:
             if link_data.get("type", "").startswith("image"):
                 image_url = link_data["href"]
                 break
 
-    message_text = f"📌 <b>{title}</b>\n\n{summary}"
+    message_text = f"⚽ <b>{title}</b>\n\n{summary}"
 
-    print(f"⚽ Sending: {title}")
-
+    print(f"📰 Sending: {title}")
     if image_url:
+        print(f"🖼️ Found image: {image_url}")
         send_photo(image_url, message_text)
     else:
+        print("⚠️ No image found, sending text only.")
         send_message(message_text)
 
 def send_message(text):
@@ -64,7 +63,6 @@ def send_photo(photo_url, caption):
     }
     r = requests.post(url, data=payload)
     print("➡️ Photo response:", r.text)
-
 
 if __name__ == "__main__":
     fetch_and_send()
