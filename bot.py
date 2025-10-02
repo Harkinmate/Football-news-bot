@@ -1,67 +1,94 @@
 import feedparser
 import requests
-from bs4 import BeautifulSoup
-from telegram import Bot
+import os
 import time
+from datetime import datetime
 
-# === CONFIG ===
-API_TOKEN = "7839637427:AAE0LL7xeUVJiJusSHaHTOGYAI3kopwxdn4"
-CHAT_ID = "@football1805"
-FEED_URL = "http://feeds.bbci.co.uk/sport/football/rss.xml"
-CHECK_INTERVAL = 300  # 5 minutes
+# ---------------- CONFIG ----------------
+BOT_TOKEN = "7839637427:AAE0LL7xeUVJiJusSHaHTOGYAI3kopwxdn4"
+CHANNEL_ID = "@football1805"
+RSS_FEED_URL = "http://feeds.bbci.co.uk/sport/football/rss.xml"
+SENT_POSTS_FILE = "sent_posts.txt"
+FETCH_INTERVAL = 60  # 1 minute
+POSTS_PER_RUN = 3    # can set 2–5
+# ----------------------------------------
 
-bot = Bot(token=API_TOKEN)
-posted_links = []
+def load_sent_posts():
+    if os.path.exists(SENT_POSTS_FILE):
+        with open(SENT_POSTS_FILE, "r") as f:
+            return set(line.strip() for line in f)
+    return set()
 
-def fetch_news():
-    feed = feedparser.parse(FEED_URL)
-    return feed.entries[:5]
+def save_sent_posts(sent_posts):
+    with open(SENT_POSTS_FILE, "w") as f:
+        for post_id in sent_posts:
+            f.write(post_id + "\n")
 
-def get_full_image(article_url):
-    """Try to scrape the main image from the article page"""
+def fetch_new_posts():
+    sent_posts = load_sent_posts()
+    feed = feedparser.parse(RSS_FEED_URL)
+    
+    today = datetime.utcnow().date()
+    new_posts = []
+
+    for entry in feed.entries:
+        post_id = entry.id if 'id' in entry else entry.link
+        published_date = datetime(*entry.published_parsed[:6]).date()
+        if post_id not in sent_posts and published_date == today:
+            # Get image from media content if available
+            image_url = ""
+            if 'media_content' in entry:
+                image_url = entry.media_content[0]['url']
+            new_posts.append((post_id, entry.title, entry.summary, image_url))
+    
+    # If no new posts today, consider last posts anyway to avoid empty
+    if not new_posts:
+        for entry in feed.entries:
+            post_id = entry.id if 'id' in entry else entry.link
+            if post_id not in sent_posts:
+                image_url = ""
+                if 'media_content' in entry:
+                    image_url = entry.media_content[0]['url']
+                new_posts.append((post_id, entry.title, entry.summary, image_url))
+
+    return new_posts[-POSTS_PER_RUN:]  # last N posts
+
+def send_posts(posts):
+    sent_posts = load_sent_posts()
+    for post_id, title, summary, image_url in posts:
+        caption = f"*{title}*\n\n{summary}"
+        try:
+            if image_url:
+                url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+                payload = {
+                    "chat_id": CHANNEL_ID,
+                    "photo": image_url,
+                    "caption": caption,
+                    "parse_mode": "Markdown"
+                }
+                requests.post(url, data=payload)
+            else:
+                url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                payload = {
+                    "chat_id": CHANNEL_ID,
+                    "text": caption,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True
+                }
+                requests.post(url, data=payload)
+            sent_posts.add(post_id)
+        except Exception as e:
+            print(f"Failed to send post {post_id}: {e}")
+    save_sent_posts(sent_posts)
+
+# Run continuously
+while True:
     try:
-        r = requests.get(article_url, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # BBC usually stores main image in <meta property="og:image">
-        og_image = soup.find("meta", property="og:image")
-        if og_image and og_image.get("content"):
-            return og_image["content"]
-
+        posts_to_send = fetch_new_posts()
+        if posts_to_send:
+            send_posts(posts_to_send)
+        else:
+            print("No new posts to send at this time.")
     except Exception as e:
-        print("Image fetch error:", e)
-    return None
-
-def send_news():
-    global posted_links
-    entries = fetch_news()
-
-    for entry in reversed(entries):
-        if entry.link not in posted_links:
-            title = entry.title
-            summary = entry.summary if hasattr(entry, "summary") else ""
-            text = f"⚽ <b>{title}</b>\n\n{summary}"
-
-            # Get big image from article page
-            image_url = get_full_image(entry.link)
-
-            try:
-                if image_url:
-                    bot.send_photo(chat_id=CHAT_ID, photo=image_url, caption=text, parse_mode="HTML")
-                else:
-                    bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="HTML")
-                print(f"Posted: {title}")
-            except Exception as e:
-                print("Send error:", e)
-
-            posted_links.append(entry.link)
-            if len(posted_links) > 100:
-                posted_links = posted_links[-100:]
-
-def main():
-    while True:
-        send_news()
-        time.sleep(CHECK_INTERVAL)
-
-if __name__ == "__main__":
-    main()
+        print(f"Error: {e}")
+    time.sleep(FETCH_INTERVAL)
