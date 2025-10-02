@@ -1,4 +1,4 @@
-name: BBC Football Telegram Bot
+name: Football Telegram Bot
 
 on:
   schedule:
